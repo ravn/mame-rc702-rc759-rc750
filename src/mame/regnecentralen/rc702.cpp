@@ -732,13 +732,16 @@ void rc702_state::rc700_base(machine_config &config)
 	/* video hardware */
 	SCREEN(config, m_screen);
 	m_screen->set_refresh_hz(50);
-	// 80 chars × 7 px = 560 visible columns, 25 rows × 8 lines = 200 visible
+	// 80 chars × 7 px = 560 visible columns, 25 rows × 11 lines = 275 visible
 	// lines, plus CRTC_BORDER pixels of background colour on all four sides.
+	// (The firmware programs the 8275 for 11 scanlines/char row -- crt_param
+	// 0x7A -- so the QR sextant blocks fill the whole cell; a 200px/8-line
+	// screen clipped the bottom rows, incl. the CP/M A> prompt.)
 	// The margin is baked into the bitmap (bitmap.fill + coordinate offset in
 	// display_pixels) rather than .lay artwork, so SDL and BGFX both show the
 	// correct amber background colour without special-casing.
-	m_screen->set_size(560 + 2 * CRTC_BORDER, 200 + 4*8 + 2 * CRTC_BORDER);
-	m_screen->set_visarea(0, 559 + 2 * CRTC_BORDER - 1, 0, 199 + 2 * CRTC_BORDER - 1);
+	m_screen->set_size(560 + 2 * CRTC_BORDER, 275 + 4*8 + 2 * CRTC_BORDER);
+	m_screen->set_visarea(0, 559 + 2 * CRTC_BORDER - 1, 0, 274 + 2 * CRTC_BORDER - 1);
 	m_screen->set_screen_update(FUNC(rc702_state::screen_update_with_border));
 
 	I8275(config, m_crtc, DOT_CLOCK / 7);
