@@ -262,9 +262,28 @@ void rc702_state::io_map(address_map &map)
 // PROM socket type: 2716 (2KB) or 2732 (4KB), selected by a socket pin-21
 // jumper (+5V Vpp vs A11).  The 2732 option is only on later board
 // revisions.  (RC702 tech manual p.63.)
+// PROM size is set by MOTHERBOARD JUMPERS (not DIP switches), which decide how
+// many high address lines reach the EPROM socket.  A bigger EPROM needs one
+// more address pin per doubling:
+//     2716  =  2 KB  A0-A10
+//     2732  =  4 KB  A0-A11   (+A11)
+//     2764  =  8 KB  A0-A12   (+A12)
+//     27128 = 16 KB  A0-A13   (+A13)
+// Per the RC702/RC703 Microcomputer technical manual, p.101:
+//   * jumper S13 feeds A11 into the socket: fitted => 4 KB (2732) addressable;
+//     unfitted => 2 KB (2716), the socket only sees A0-A10 and the image mirrors.
+//   * jumper S11 feeds A13 into the socket: enables an EPROM LARGER than 4 KB
+//     (A13 is address pin 13, i.e. the 16 KB / 27128 class).
+//   * A12 is always fed on the RC703, but NOT on the RC702 -- so the 8 KB (2764)
+//     step is an RC703-only capability; an RC702 socket has no A12.
+// Modelled here as PORT_CONFNAME (a jumper/config setting, not a runtime DIP).
+// bit 0 == S13 (A11).  Set S13 = "2732 (4KB)" to boot an oversized 4 KB image.
+// (S11/A13 and the RC703 A12 step are documented above but not yet wired here.)
 static INPUT_PORTS_START( rc702_promcfg )
 	PORT_START("PROMCFG")
-	PORT_CONFNAME( 0x01, 0x00, "PROM0 (IC66) Type")
+	// TEMPORARY default 0x01 (S13 fitted / 4 KB) so the oversized clang PROM0
+	// boots without a per-run config; stock RC702 default is 0x00 (2 KB).
+	PORT_CONFNAME( 0x01, 0x01, "PROM0 (IC66) Type / S13 jumper (A11)")
 	PORT_CONFSETTING(    0x00, "2716 (2KB)")
 	PORT_CONFSETTING(    0x01, "2732 (4KB)")
 	PORT_CONFNAME( 0x02, 0x02, "PROM1 (IC65) Type")
@@ -651,6 +670,11 @@ void rc702_state::rc700_base(machine_config &config)
 	m_sio->out_dtrb_callback().set(m_rs232b, FUNC(rs232_port_device::write_dtr));
 
 	// SIO-A (J1): data/reader port - mapped to RDR:/PUN: in CP/M.
+	// No baud-rate default is baked in: set it per run on the command line to
+	// match the firmware's cold-boot rate, e.g.
+	//   -rs232a null_modem -rs232a:null_modem:baud 38400
+	// (the fork-only 38400-8-N-1 default for the cpnos CP/NET test harness is
+	// parked on branch parked-rc702-cpnet-bridge, issue #50).
 	RS232_PORT(config, m_rs232a, default_rs232_devices, "null_modem");
 	m_rs232a->rxd_handler().set(m_sio, FUNC(z80sio_device::rxa_w));
 	m_rs232a->cts_handler().set(m_sio, FUNC(z80sio_device::ctsa_w));
@@ -661,7 +685,7 @@ void rc702_state::rc700_base(machine_config &config)
 	// host -- CP/NET traffic can go over either this SIO channel or PIO-B.
 	// No baud-rate default is set; the firmware programs the CTC baud
 	// generator at cold boot, so match the null_modem slot to the firmware
-	// rate (typically 38400 8-N-1) in MAME's slot options.
+	// rate (typically 38400 8-N-1) on the command line (see SIO-A above).
 	RS232_PORT(config, m_rs232b, default_rs232_devices, "null_modem");
 	m_rs232b->rxd_handler().set(m_sio, FUNC(z80sio_device::rxb_w));
 	m_rs232b->cts_handler().set(m_sio, FUNC(z80sio_device::ctsb_w));
@@ -708,13 +732,16 @@ void rc702_state::rc700_base(machine_config &config)
 	/* video hardware */
 	SCREEN(config, m_screen);
 	m_screen->set_refresh_hz(50);
-	// 80 chars × 7 px = 560 visible columns, 25 rows × 8 lines = 200 visible
+	// 80 chars × 7 px = 560 visible columns, 25 rows × 11 lines = 275 visible
 	// lines, plus CRTC_BORDER pixels of background colour on all four sides.
+	// (The firmware programs the 8275 for 11 scanlines/char row -- crt_param
+	// 0x7A -- so the QR sextant blocks fill the whole cell; a 200px/8-line
+	// screen clipped the bottom rows, incl. the CP/M A> prompt.)
 	// The margin is baked into the bitmap (bitmap.fill + coordinate offset in
 	// display_pixels) rather than .lay artwork, so SDL and BGFX both show the
 	// correct amber background colour without special-casing.
-	m_screen->set_size(560 + 2 * CRTC_BORDER, 200 + 4*8 + 2 * CRTC_BORDER);
-	m_screen->set_visarea(0, 559 + 2 * CRTC_BORDER - 1, 0, 199 + 2 * CRTC_BORDER - 1);
+	m_screen->set_size(560 + 2 * CRTC_BORDER, 275 + 4*8 + 2 * CRTC_BORDER);
+	m_screen->set_visarea(0, 559 + 2 * CRTC_BORDER - 1, 0, 274 + 2 * CRTC_BORDER - 1);
 	m_screen->set_screen_update(FUNC(rc702_state::screen_update_with_border));
 
 	I8275(config, m_crtc, DOT_CLOCK / 7);
@@ -796,16 +823,20 @@ void rc702_state::rc702sem702(machine_config &config)
 // roa375 only; rc703 defaults to rob357 with rob358 as an RC700 option.
 
 ROM_START( rc702 )
-	// IC66: 2716 (2KB) or 2732 (4KB) EPROM.  Region is 0x1000 with ERASEFF;
-	// a 2KB dump fills the low half and the rest stays 0xff.
+	// IC66: 2716 (2KB) or 2732 (4KB) EPROM.  Region is 0x1000 with ERASEFF.
+	// The early RC702 models could only use 2716s, but the later ones could use either
+	// with the size indicated with a jumper on the S13 header.
+	// TEMPORARY: load the full 0x1000 (4 KB) so an oversized clang PROM0 image
+	// boots for MAME testing while the post-#40 codegen size regression is
+	// worked; the S13 default below is likewise flipped to 4 KB.  Restore to
+	// 0x0800 (stock 2 KB roa375 dump) afterwards.  BADCRC: the 2 KB dump's hash
+	// no longer matches a 4 KB read; kept for provenance, warning is harmless.
 	ROM_REGION( 0x1000, "maincpu", ROMREGION_ERASEFF )
-	ROM_LOAD( "roa375.ic66", 0x0000, 0x0800, CRC(034cf9ea) SHA1(306af9fc779e3d4f51645ba04f8a99b11b5e6084) )
+	ROM_LOAD( "roa375.ic66", 0x0000, 0x1000, BAD_DUMP CRC(034cf9ea) SHA1(306af9fc779e3d4f51645ba04f8a99b11b5e6084) )
 
-	// IC65 line-program ROM (ROB388 on MIC705), undumped.  Optional: drop a
-	// prom1.ic65 into the rom path to supply one (e.g. the CP/NOS line
-	// program); otherwise the region stays 0xff.
+	// IC65 line-program ROM socket for the optional PROM1.
 	ROM_REGION( 0x1000, "prom1", ROMREGION_ERASEFF )
-	ROM_LOAD_OPTIONAL( "prom1.ic65", 0x0000, 0x1000, NO_DUMP )
+	//ROM_LOAD_OPTIONAL( "prom1.ic65", 0x0000, 0x1000, NO_DUMP )
 
 	ROM_REGION( 0x1000, "chargen", 0 )
 	ROM_LOAD( "roa296.rom", 0x0000, 0x0800, CRC(7d7e4548) SHA1(efb8b1ece5f9eeca948202a6396865f26134ff2f) ) // char
@@ -825,8 +856,10 @@ ROM_START( rc703 )
 	ROM_SYSTEM_BIOS(1, "rc700", "RC700")
 	ROMX_LOAD( "rob358.rom", 0x0000, 0x0800, CRC(254aa89e) SHA1(5fb1eb8df1b853b931e670a2ff8d062c1bd8d6bc), ROM_BIOS(1))
 
+	// empty PROM1 line-program socket by default (see rc702 above); commented
+	// out to avoid the startup "bad ROM dump" warning.
 	ROM_REGION( 0x1000, "prom1", ROMREGION_ERASEFF )
-	ROM_LOAD_OPTIONAL( "prom1.ic65", 0x0000, 0x1000, NO_DUMP )
+	//ROM_LOAD_OPTIONAL( "prom1.ic65", 0x0000, 0x1000, NO_DUMP )
 
 	ROM_REGION( 0x1000, "chargen", 0 )
 	ROM_LOAD( "roa296.rom", 0x0000, 0x0800, CRC(7d7e4548) SHA1(efb8b1ece5f9eeca948202a6396865f26134ff2f) )
