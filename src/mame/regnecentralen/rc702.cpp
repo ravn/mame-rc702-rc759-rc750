@@ -824,6 +824,8 @@ void rc702_state::rc702sem702(machine_config &config)
 
 ROM_START( rc702 )
 	// IC66: 2716 (2KB) or 2732 (4KB) EPROM.  Region is 0x1000 with ERASEFF.
+	// The early RC702 models could only use 2716s, but the later ones could use either
+	// with the size indicated with a jumper on the S13 header.
 	// TEMPORARY: load the full 0x1000 (4 KB) so an oversized clang PROM0 image
 	// boots for MAME testing while the post-#40 codegen size regression is
 	// worked; the S13 default below is likewise flipped to 4 KB.  Restore to
