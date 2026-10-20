@@ -64,6 +64,8 @@ References:
 
 #include "pio_port/pio_port.h"
 
+#include "bus/generic/slot.h"
+#include "bus/generic/carts.h"
 #include "bus/rs232/rs232.h"
 #include "cpu/z80/z80.h"
 #include "imagedev/floppy.h"
@@ -120,7 +122,9 @@ public:
 		, m_palette(*this, "palette")
 		, m_maincpu(*this, "maincpu")
 		, m_rom(*this, "maincpu")
-		, m_rom_prom1(*this, "prom1")
+		, m_rom_prom1(*this, "prom1_region")
+		, m_socket_prom0(*this, "prom0")
+		, m_socket_prom1(*this, "prom1")
 		, m_ram(*this, "mainram")
 		, m_bank1(*this, "bank1")
 		, m_bank1h(*this, "bank1h")
@@ -178,6 +182,10 @@ private:
 	void kbd_put(u8 data);
 	uint8_t kbd_r();
 
+	template <unsigned Slot> std::pair<std::error_condition, std::string> prom_load(device_image_interface &image);
+	DECLARE_DEVICE_IMAGE_LOAD_MEMBER(prom0_load) { return prom_load<0>(image); }
+	DECLARE_DEVICE_IMAGE_LOAD_MEMBER(prom1_load) { return prom_load<1>(image); }
+
 	void io_map(address_map &map) ATTR_COLD;
 	void mem_map(address_map &map) ATTR_COLD;
 
@@ -202,6 +210,8 @@ private:
 	required_device<z80_device> m_maincpu;
 	required_region_ptr<u8> m_rom;
 	required_region_ptr<u8> m_rom_prom1;
+	required_device<generic_slot_device> m_socket_prom0;
+	required_device<generic_slot_device> m_socket_prom1;
 	required_shared_ptr<u8> m_ram;
 	required_memory_bank    m_bank1;
 	required_memory_bank    m_bank1h;
@@ -478,6 +488,31 @@ void rc702_state::dack2_w(int state)
 	m_7474->clock_w(m_dack2 || m_eop);
 }
 
+template <unsigned Slot>
+std::pair<std::error_condition, std::string> rc702_state::prom_load(device_image_interface &image)
+{
+	generic_slot_device &slot = downcast<generic_slot_device &>(image.device());
+	uint32_t const size = slot.common_get_size("rom");
+
+	if (size > 0x1000)
+		return std::make_pair(image_error::INVALIDLENGTH, "Unsupported PROM size (maximum 4KB)");
+
+	memory_region *region = memregion(Slot == 0 ? "maincpu" : "prom1_region");
+	if (!region || region->bytes() < 0x1000)
+		return std::make_pair(image_error::UNSPECIFIED, "PROM memory region not found or too small");
+
+	u8 *base = region->base();
+	std::memset(base, 0xff, 0x1000);
+	slot.common_load_rom(base, size, "rom");
+
+	// For <=2KB images, mirror into upper 2KB so 2716 images work
+	// whether jumper S13 (PROMCFG bit 0) is set to 2KB or 4KB.
+	if (size <= 0x0800)
+		std::memcpy(base + 0x0800, base, size);
+
+	return std::make_pair(std::error_condition(), std::string());
+}
+
 void rc702_state::port14_w(uint8_t data)
 {
 	// Mini floppy motor: bit 0 = 1 starts, 0 stops (no-op on always-spinning
@@ -650,6 +685,7 @@ static void rc703_floppies(device_slot_interface &device)
 static DEVICE_INPUT_DEFAULTS_START(rc702_null_modem_defaults)
 	DEVICE_INPUT_DEFAULTS("RS232_TXBAUD", 0xff, RS232_BAUD_38400)
 	DEVICE_INPUT_DEFAULTS("RS232_RXBAUD", 0xff, RS232_BAUD_38400)
+	DEVICE_INPUT_DEFAULTS("FLOW_CONTROL", 0x07, 0x01)
 DEVICE_INPUT_DEFAULTS_END
 
 void rc702_state::rc700_base(machine_config &config)
@@ -730,6 +766,10 @@ void rc702_state::rc700_base(machine_config &config)
 	TTL7474(config, m_7474);
 	m_7474->output_cb().set(FUNC(rc702_state::q_w));
 	m_7474->comp_output_cb().set(FUNC(rc702_state::qbar_w));
+
+	// PROM sockets: IC66 (boot PROM0) and IC65 (optional line-program PROM1)
+	GENERIC_SOCKET(config, m_socket_prom0, generic_plain_slot, "rc700_rom", "bin,rom").set_device_load(FUNC(rc702_state::prom0_load));
+	GENERIC_SOCKET(config, m_socket_prom1, generic_plain_slot, "rc700_rom", "bin,rom").set_device_load(FUNC(rc702_state::prom1_load));
 
 	/* video hardware */
 	SCREEN(config, m_screen);
@@ -828,17 +868,14 @@ ROM_START( rc702 )
 	// IC66: 2716 (2KB) or 2732 (4KB) EPROM.  Region is 0x1000 with ERASEFF.
 	// The early RC702 models could only use 2716s, but the later ones could use either
 	// with the size indicated with a jumper on the S13 header.
-	// TEMPORARY: load the full 0x1000 (4 KB) so an oversized clang PROM0 image
-	// boots for MAME testing while the post-#40 codegen size regression is
-	// worked; the S13 default below is likewise flipped to 4 KB.  Restore to
-	// 0x0800 (stock 2 KB roa375 dump) afterwards.  BADCRC: the 2 KB dump's hash
-	// no longer matches a 4 KB read; kept for provenance, warning is harmless.
+	// Stock RC702 firmware is the 2 KB roa375 dump. Custom/development ROMs
+	// can be loaded into socket IC66 via the -prom0 option.
 	ROM_REGION( 0x1000, "maincpu", ROMREGION_ERASEFF )
-	ROM_LOAD( "roa375.ic66", 0x0000, 0x1000, CRC(8b1d5d7a) SHA1(527e4cb5290a946c50df8814f96ce8036152ba7b) )
+	ROM_LOAD( "roa375.ic66", 0x0000, 0x0800, CRC(034cf9ea) SHA1(306af9fc779e3d4f51645ba04f8a99b11b5e6084) )
 
-	// IC65 line-program ROM socket for the optional PROM1.
-	ROM_REGION( 0x1000, "prom1", ROMREGION_ERASEFF )
-	ROM_LOAD_OPTIONAL( "prom1.ic65", 0x0000, 0x0800, CRC(1a301965) SHA1(f506d1c734e528c4ca944d2210bf721e7f745776) )
+	// IC65 line-program ROM socket for the optional PROM1 (unpopulated by default).
+	// Custom/development ROMs can be loaded into socket IC65 via the -prom1 option.
+	ROM_REGION( 0x1000, "prom1_region", ROMREGION_ERASEFF )
 
 	ROM_REGION( 0x1000, "chargen", 0 )
 	ROM_LOAD( "roa296.rom", 0x0000, 0x0800, CRC(7d7e4548) SHA1(efb8b1ece5f9eeca948202a6396865f26134ff2f) ) // char
@@ -858,10 +895,8 @@ ROM_START( rc703 )
 	ROM_SYSTEM_BIOS(1, "rc700", "RC700")
 	ROMX_LOAD( "rob358.rom", 0x0000, 0x0800, CRC(254aa89e) SHA1(5fb1eb8df1b853b931e670a2ff8d062c1bd8d6bc), ROM_BIOS(1))
 
-	// empty PROM1 line-program socket by default (see rc702 above); commented
-	// out to avoid the startup "bad ROM dump" warning.
-	ROM_REGION( 0x1000, "prom1", ROMREGION_ERASEFF )
-	ROM_LOAD_OPTIONAL( "prom1.ic65", 0x0000, 0x0800, NO_DUMP )
+	// empty PROM1 line-program socket by default (see rc702 above).
+	ROM_REGION( 0x1000, "prom1_region", ROMREGION_ERASEFF )
 
 	ROM_REGION( 0x1000, "chargen", 0 )
 	ROM_LOAD( "roa296.rom", 0x0000, 0x0800, CRC(7d7e4548) SHA1(efb8b1ece5f9eeca948202a6396865f26134ff2f) )
