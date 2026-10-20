@@ -93,7 +93,7 @@ namespace {
 // screen bitmap via bitmap.fill(0) + coordinate offset in display_pixels,
 // so it is renderer-independent (SDL and BGFX both show the correct colour
 // without relying on .lay artwork).
-static constexpr int CRTC_BORDER = 8;
+static constexpr int CRTC_BORDER = 0;
 
 // RC702 clock tree (see RC702_HARDWARE_TECHNICAL_REFERENCE.md):
 //   * 8 MHz crystal          -> Z80 CPU and the CTC/SIO/PIO + Am9517A DMA all
@@ -302,7 +302,7 @@ static INPUT_PORTS_START( rc702_maxi )
 	PORT_DIPNAME( 0x02, 0x00, "S02")
 	PORT_DIPSETTING(    0x02, DEF_STR( Off ))
 	PORT_DIPSETTING(    0x00, DEF_STR( On ))
-	PORT_DIPNAME( 0x04, 0x00, "S03")
+	PORT_DIPNAME( 0x04, 0x04, "S03")
 	PORT_DIPSETTING(    0x04, DEF_STR( Off ))
 	PORT_DIPSETTING(    0x00, DEF_STR( On ))
 	PORT_DIPNAME( 0x08, 0x00, "S04")
@@ -644,6 +644,14 @@ static void rc703_floppies(device_slot_interface &device)
 	device.option_add("525qd", FLOPPY_525_QD);
 }
 
+// RC702 firmware (both rcbios and cpnos) programs CTC1 ch0/ch1 (TC=1) and
+// SIO WR4 (x16 mode) for 38400 baud 8N1. Configure attached null_modem
+// devices to match by default so serial communication is not garbled.
+static DEVICE_INPUT_DEFAULTS_START(rc702_null_modem_defaults)
+	DEVICE_INPUT_DEFAULTS("RS232_TXBAUD", 0xff, RS232_BAUD_38400)
+	DEVICE_INPUT_DEFAULTS("RS232_RXBAUD", 0xff, RS232_BAUD_38400)
+DEVICE_INPUT_DEFAULTS_END
+
 void rc702_state::rc700_base(machine_config &config)
 {
 	/* basic machine hardware */
@@ -670,23 +678,17 @@ void rc702_state::rc700_base(machine_config &config)
 	m_sio->out_dtrb_callback().set(m_rs232b, FUNC(rs232_port_device::write_dtr));
 
 	// SIO-A (J1): data/reader port - mapped to RDR:/PUN: in CP/M.
-	// No baud-rate default is baked in: set it per run on the command line to
-	// match the firmware's cold-boot rate, e.g.
-	//   -rs232a null_modem -rs232a:null_modem:baud 38400
-	// (the fork-only 38400-8-N-1 default for the cpnos CP/NET test harness is
-	// parked on branch parked-rc702-cpnet-bridge, issue #50).
+	// Defaults to 38400 baud 8N1 matching the firmware cold-boot rate.
 	RS232_PORT(config, m_rs232a, default_rs232_devices, "null_modem");
+	m_rs232a->set_option_device_input_defaults("null_modem", DEVICE_INPUT_DEFAULTS_NAME(rc702_null_modem_defaults));
 	m_rs232a->rxd_handler().set(m_sio, FUNC(z80sio_device::rxa_w));
 	m_rs232a->cts_handler().set(m_sio, FUNC(z80sio_device::ctsa_w));
 	m_rs232a->dcd_handler().set(m_sio, FUNC(z80sio_device::dcda_w));
 
-	// SIO-B (J2): traditionally a printer port.  Here it is wired to a
-	// null_modem so the guest can talk to an MP/M server running on the
-	// host -- CP/NET traffic can go over either this SIO channel or PIO-B.
-	// No baud-rate default is set; the firmware programs the CTC baud
-	// generator at cold boot, so match the null_modem slot to the firmware
-	// rate (typically 38400 8-N-1) on the command line (see SIO-A above).
+	// SIO-B (J2): traditionally a printer port; also usable for CP/NET traffic
+	// to MP/M server. Defaults to 38400 baud 8N1.
 	RS232_PORT(config, m_rs232b, default_rs232_devices, "null_modem");
+	m_rs232b->set_option_device_input_defaults("null_modem", DEVICE_INPUT_DEFAULTS_NAME(rc702_null_modem_defaults));
 	m_rs232b->rxd_handler().set(m_sio, FUNC(z80sio_device::rxb_w));
 	m_rs232b->cts_handler().set(m_sio, FUNC(z80sio_device::ctsb_w));
 	m_rs232b->dcd_handler().set(m_sio, FUNC(z80sio_device::dcdb_w));
@@ -832,11 +834,11 @@ ROM_START( rc702 )
 	// 0x0800 (stock 2 KB roa375 dump) afterwards.  BADCRC: the 2 KB dump's hash
 	// no longer matches a 4 KB read; kept for provenance, warning is harmless.
 	ROM_REGION( 0x1000, "maincpu", ROMREGION_ERASEFF )
-	ROM_LOAD( "roa375.ic66", 0x0000, 0x1000, BAD_DUMP CRC(034cf9ea) SHA1(306af9fc779e3d4f51645ba04f8a99b11b5e6084) )
+	ROM_LOAD( "roa375.ic66", 0x0000, 0x1000, CRC(2a45fdb9) SHA1(994702c000b6a685288b5cedae0f29e3d4efd1aa) )
 
 	// IC65 line-program ROM socket for the optional PROM1.
 	ROM_REGION( 0x1000, "prom1", ROMREGION_ERASEFF )
-	//ROM_LOAD_OPTIONAL( "prom1.ic65", 0x0000, 0x1000, NO_DUMP )
+	ROM_LOAD_OPTIONAL( "prom1.ic65", 0x0000, 0x0800, CRC(1a301965) SHA1(f506d1c734e528c4ca944d2210bf721e7f745776) )
 
 	ROM_REGION( 0x1000, "chargen", 0 )
 	ROM_LOAD( "roa296.rom", 0x0000, 0x0800, CRC(7d7e4548) SHA1(efb8b1ece5f9eeca948202a6396865f26134ff2f) ) // char
@@ -859,7 +861,7 @@ ROM_START( rc703 )
 	// empty PROM1 line-program socket by default (see rc702 above); commented
 	// out to avoid the startup "bad ROM dump" warning.
 	ROM_REGION( 0x1000, "prom1", ROMREGION_ERASEFF )
-	//ROM_LOAD_OPTIONAL( "prom1.ic65", 0x0000, 0x1000, NO_DUMP )
+	ROM_LOAD_OPTIONAL( "prom1.ic65", 0x0000, 0x0800, NO_DUMP )
 
 	ROM_REGION( 0x1000, "chargen", 0 )
 	ROM_LOAD( "roa296.rom", 0x0000, 0x0800, CRC(7d7e4548) SHA1(efb8b1ece5f9eeca948202a6396865f26134ff2f) )

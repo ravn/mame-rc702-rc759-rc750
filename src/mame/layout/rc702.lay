@@ -20,10 +20,17 @@ View 776x568 with screen filling the full bounds.  The 8-pixel bitmap margin
 -->
 <mamelayout version="2">
 
+	<element name="bg">
+		<rect><color red="0.310" green="0.145" blue="0.035" /></rect>
+	</element>
+
 	<view name="Standard">
-		<bounds x="0" y="0" width="776" height="568" />
+		<bounds x="0" y="0" width="816" height="600" />
+		<element ref="bg">
+			<bounds x="0" y="0" width="816" height="600" />
+		</element>
 		<screen index="0">
-			<bounds x="0" y="0" width="776" height="568" />
+			<bounds x="20" y="16" width="776" height="568" />
 		</screen>
 	</view>
 
