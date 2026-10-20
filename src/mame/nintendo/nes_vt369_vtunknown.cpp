@@ -85,6 +85,7 @@ protected:
 	void extbank_w(u8 data);
 	void extbank_red5mam_w(u8 data);
 	void extbank_h12p1000_w(u8 data);
+	void extbank_500in1gf_w(u8 data);
 
 protected:
 	/* Extra IO */
@@ -172,6 +173,7 @@ public:
 	void vt4ffx_16mb(machine_config &config) ATTR_COLD;
 	void vt4ffx_32mb(machine_config &config) ATTR_COLD;
 	void vt4ffx_h12p1000(machine_config &config) ATTR_COLD;
+	void vt4ffx_500in1gf(machine_config &config) ATTR_COLD;
 
 	void vt4ffx_vibesswap_1mb(machine_config &config) ATTR_COLD;
 	void vt4ffx_vibesswap_8mb(machine_config &config) ATTR_COLD;
@@ -536,6 +538,11 @@ void vt369_base_state::extbank_h12p1000_w(u8 data)
 	m_ahigh = ((data & 0x02) << 23);
 }
 
+void vt369_base_state::extbank_500in1gf_w(u8 data)
+{
+	m_ahigh = ((data & 0x08) << 21);
+}
+
 
 
 
@@ -820,6 +827,13 @@ void vt4ffx_state::vt4ffx_h12p1000(machine_config &config)
 	vt4ffx_16mb(config);
 	m_soc->set_addrmap(AS_PROGRAM, &vt4ffx_state::vt_external_space_map_16mbyte_bank);
 	m_soc->io_4139_write_callback().set(FUNC(vt4ffx_state::extbank_h12p1000_w));
+}
+
+void vt4ffx_state::vt4ffx_500in1gf(machine_config &config)
+{
+	vt4ffx_gbox2020_16mb(config);
+	m_soc->set_addrmap(AS_PROGRAM, &vt4ffx_state::vt_external_space_map_16mbyte_bank);
+	m_soc->io_4139_write_callback().set(FUNC(vt4ffx_state::extbank_500in1gf_w));
 }
 
 // there are also accesses to 4158 and 4151 which may be related to the I/O ports
@@ -1565,11 +1579,7 @@ ROM_START( goretrop )
 	ROM_LOAD( "goretroportable.bin", 0x00000, 0x2000000, CRC(e7279dd3) SHA1(5f096ce22e46f112c2cc6588cb1c527f4f0430b5) )
 
 	ROM_REGION( 0x100, "protection", 0 ) // data from additional 8-pin chip for protection (copied to 0x701 - 0x7ff)
-	// This is a hacked version of the data from gtct885, as the 'jump from ROM' offsets seem to match, but the
-	// code needs to be at a different address, and some of the ports read/written by the code are different too
-	//
-	// This is functional enough to get the menu running, but the real data still needs extracting.
-	ROM_LOAD( "protection.bin", 0x00000, 0x100, BAD_DUMP CRC(3cd42234) SHA1(3a4afc890d894b4256960150b2729fd5f93555a0) )
+	ROM_LOAD( "goretrop_8pin.bin", 0x000, 0x100, CRC(0917af6d) SHA1(4077f46ef7928ceee9c67a746c741eaac12847c6) ) // dumped from this unit
 ROM_END
 
 ROM_START( goretropa )
@@ -1577,8 +1587,7 @@ ROM_START( goretropa )
 	ROM_LOAD( "goretro.bin", 0x00000, 0x2000000, CRC(e2c579cc) SHA1(b5cb8883d1f0b238fc9966ac635583dd5c66bcfe) )
 
 	ROM_REGION( 0x100, "protection", 0 ) // data from additional 8-pin chip for protection (copied to 0x701 - 0x7ff)
-	// see note in goretrop set
-	ROM_LOAD( "protection.bin", 0x00000, 0x100, BAD_DUMP CRC(3cd42234) SHA1(3a4afc890d894b4256960150b2729fd5f93555a0) )
+	ROM_LOAD( "goretrop_8pin.bin", 0x000, 0x100, CRC(0917af6d) SHA1(4077f46ef7928ceee9c67a746c741eaac12847c6) )
 ROM_END
 
 ROM_START( goretropu13 )
@@ -1586,8 +1595,7 @@ ROM_START( goretropu13 )
 	ROM_LOAD( "goretroportable250p_v13.bin", 0x00000, 0x2000000, CRC(b2a94173) SHA1(e64989f4b0a29820b0dce5e0ca91abb8f247c269) )
 
 	ROM_REGION( 0x100, "protection", 0 ) // data from additional 8-pin chip for protection (copied to 0x701 - 0x7ff)
-	// see note in goretrop set
-	ROM_LOAD( "protection.bin", 0x00000, 0x100, BAD_DUMP CRC(3cd42234) SHA1(3a4afc890d894b4256960150b2729fd5f93555a0) )
+	ROM_LOAD( "goretrop_8pin.bin", 0x000, 0x100, CRC(0917af6d) SHA1(4077f46ef7928ceee9c67a746c741eaac12847c6) )
 ROM_END
 
 ROM_START( goretropu12 )
@@ -1595,8 +1603,7 @@ ROM_START( goretropu12 )
 	ROM_LOAD( "goretroportable250p_v12.bin", 0x00000, 0x2000000, CRC(fda93863) SHA1(75e48ac27e5520953676894747d6d06307cdc1af) )
 
 	ROM_REGION( 0x100, "protection", 0 ) // data from additional 8-pin chip for protection (copied to 0x701 - 0x7ff)
-	// see note in goretrop set
-	ROM_LOAD( "protection.bin", 0x00000, 0x100, BAD_DUMP CRC(3cd42234) SHA1(3a4afc890d894b4256960150b2729fd5f93555a0) )
+	ROM_LOAD( "goretrop_8pin.bin", 0x000, 0x100, CRC(0917af6d) SHA1(4077f46ef7928ceee9c67a746c741eaac12847c6) )
 ROM_END
 
 ROM_START( s10fake )
@@ -1955,8 +1962,8 @@ CONS( 202?, s10_520,   0,  0,  vt4ffx_gbox2020_16mb, vt369, vt4ffx_state, empty_
 CONS( 202?, s5_520,    0,  0,  vt4ffx_16mb,          vt369, vt4ffx_state, empty_init, "<unknown>", "S5 Game Box (520-in-1)",  MACHINE_NOT_WORKING )
 // fewer games, but does have the scramble
 CONS( 202?, 500in1hh,  0,  0,  vt4ffx_gbox2020_16mb, vt369, vt4ffx_state, empty_init, "<unknown>", "500-in-1 Handheld Game",  MACHINE_NOT_WORKING )
-// needs banking? (32MByte ROM, but doesn't expect plain mapping)
-CONS( 202?, 500in1gf,  0,  0,  vt4ffx_gbox2020_16mb, vt369, vt4ffx_state, init_s10fake, "<unknown>", "500-in-1 Handheld Game (German / French / English / Chinese menu)",  MACHINE_NOT_WORKING )
+// 32MByte ROM, but doesn't expect plain mapping
+CONS( 202?, 500in1gf,  0,  0,  vt4ffx_500in1gf,      vt369, vt4ffx_state, init_s10fake, "<unknown>", "500-in-1 Handheld Game (German / French / English / Chinese menu)",  MACHINE_NOT_WORKING )
 
 // there were also 'F1' units, shaped like a car, ROM may or may not be the same
 CONS( 202?, f5_620,    0,  0,  vt4ffx_16mb,        vt369, vt4ffx_state, init_f5_620,   "<unknown>", "F5 Handheld Game Console (620-in-1)",  MACHINE_NOT_WORKING )

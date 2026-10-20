@@ -213,9 +213,15 @@ newoption {
 local framework_path_default = (_OPTIONS["SDL_FRAMEWORK_PATH"] == nil)
 
 -- SDL 3's framework now contains all Apple platforms in a single framework, so we need to
--- specifically ask for the macOS version.
+-- specifically ask for the macOS version. Check user's ~/Library/Frameworks before system.
 if not _OPTIONS["SDL_FRAMEWORK_PATH"] then
-	_OPTIONS["SDL_FRAMEWORK_PATH"] = "/Library/Frameworks/SDL3.xcframework/macos-arm64_x86_64/"
+	local home = os.getenv("HOME")
+	local user_framework_path = home and (home .. "/Library/Frameworks/SDL3.xcframework/macos-arm64_x86_64/")
+	if user_framework_path and os.isdir(user_framework_path) then
+		_OPTIONS["SDL_FRAMEWORK_PATH"] = user_framework_path
+	else
+		_OPTIONS["SDL_FRAMEWORK_PATH"] = "/Library/Frameworks/SDL3.xcframework/macos-arm64_x86_64/"
+	end
 end
 
 newoption {

@@ -64,6 +64,8 @@ References:
 
 #include "pio_port/pio_port.h"
 
+#include "bus/generic/slot.h"
+#include "bus/generic/carts.h"
 #include "bus/rs232/rs232.h"
 #include "cpu/z80/z80.h"
 #include "imagedev/floppy.h"
@@ -93,7 +95,7 @@ namespace {
 // screen bitmap via bitmap.fill(0) + coordinate offset in display_pixels,
 // so it is renderer-independent (SDL and BGFX both show the correct colour
 // without relying on .lay artwork).
-static constexpr int CRTC_BORDER = 8;
+static constexpr int CRTC_BORDER = 0;
 
 // RC702 clock tree (see RC702_HARDWARE_TECHNICAL_REFERENCE.md):
 //   * 8 MHz crystal          -> Z80 CPU and the CTC/SIO/PIO + Am9517A DMA all
@@ -120,7 +122,9 @@ public:
 		, m_palette(*this, "palette")
 		, m_maincpu(*this, "maincpu")
 		, m_rom(*this, "maincpu")
-		, m_rom_prom1(*this, "prom1")
+		, m_rom_prom1(*this, "prom1_region")
+		, m_socket_prom0(*this, "prom0")
+		, m_socket_prom1(*this, "prom1")
 		, m_ram(*this, "mainram")
 		, m_bank1(*this, "bank1")
 		, m_bank1h(*this, "bank1h")
@@ -178,6 +182,10 @@ private:
 	void kbd_put(u8 data);
 	uint8_t kbd_r();
 
+	template <unsigned Slot> std::pair<std::error_condition, std::string> prom_load(device_image_interface &image);
+	DECLARE_DEVICE_IMAGE_LOAD_MEMBER(prom0_load) { return prom_load<0>(image); }
+	DECLARE_DEVICE_IMAGE_LOAD_MEMBER(prom1_load) { return prom_load<1>(image); }
+
 	void io_map(address_map &map) ATTR_COLD;
 	void mem_map(address_map &map) ATTR_COLD;
 
@@ -202,6 +210,8 @@ private:
 	required_device<z80_device> m_maincpu;
 	required_region_ptr<u8> m_rom;
 	required_region_ptr<u8> m_rom_prom1;
+	required_device<generic_slot_device> m_socket_prom0;
+	required_device<generic_slot_device> m_socket_prom1;
 	required_shared_ptr<u8> m_ram;
 	required_memory_bank    m_bank1;
 	required_memory_bank    m_bank1h;
@@ -262,9 +272,28 @@ void rc702_state::io_map(address_map &map)
 // PROM socket type: 2716 (2KB) or 2732 (4KB), selected by a socket pin-21
 // jumper (+5V Vpp vs A11).  The 2732 option is only on later board
 // revisions.  (RC702 tech manual p.63.)
+// PROM size is set by MOTHERBOARD JUMPERS (not DIP switches), which decide how
+// many high address lines reach the EPROM socket.  A bigger EPROM needs one
+// more address pin per doubling:
+//     2716  =  2 KB  A0-A10
+//     2732  =  4 KB  A0-A11   (+A11)
+//     2764  =  8 KB  A0-A12   (+A12)
+//     27128 = 16 KB  A0-A13   (+A13)
+// Per the RC702/RC703 Microcomputer technical manual, p.101:
+//   * jumper S13 feeds A11 into the socket: fitted => 4 KB (2732) addressable;
+//     unfitted => 2 KB (2716), the socket only sees A0-A10 and the image mirrors.
+//   * jumper S11 feeds A13 into the socket: enables an EPROM LARGER than 4 KB
+//     (A13 is address pin 13, i.e. the 16 KB / 27128 class).
+//   * A12 is always fed on the RC703, but NOT on the RC702 -- so the 8 KB (2764)
+//     step is an RC703-only capability; an RC702 socket has no A12.
+// Modelled here as PORT_CONFNAME (a jumper/config setting, not a runtime DIP).
+// bit 0 == S13 (A11).  Set S13 = "2732 (4KB)" to boot an oversized 4 KB image.
+// (S11/A13 and the RC703 A12 step are documented above but not yet wired here.)
 static INPUT_PORTS_START( rc702_promcfg )
 	PORT_START("PROMCFG")
-	PORT_CONFNAME( 0x01, 0x00, "PROM0 (IC66) Type")
+	// TEMPORARY default 0x01 (S13 fitted / 4 KB) so the oversized clang PROM0
+	// boots without a per-run config; stock RC702 default is 0x00 (2 KB).
+	PORT_CONFNAME( 0x01, 0x01, "PROM0 (IC66) Type / S13 jumper (A11)")
 	PORT_CONFSETTING(    0x00, "2716 (2KB)")
 	PORT_CONFSETTING(    0x01, "2732 (4KB)")
 	PORT_CONFNAME( 0x02, 0x02, "PROM1 (IC65) Type")
@@ -283,7 +312,7 @@ static INPUT_PORTS_START( rc702_maxi )
 	PORT_DIPNAME( 0x02, 0x00, "S02")
 	PORT_DIPSETTING(    0x02, DEF_STR( Off ))
 	PORT_DIPSETTING(    0x00, DEF_STR( On ))
-	PORT_DIPNAME( 0x04, 0x00, "S03")
+	PORT_DIPNAME( 0x04, 0x04, "S03")
 	PORT_DIPSETTING(    0x04, DEF_STR( Off ))
 	PORT_DIPSETTING(    0x00, DEF_STR( On ))
 	PORT_DIPNAME( 0x08, 0x00, "S04")
@@ -459,6 +488,31 @@ void rc702_state::dack2_w(int state)
 	m_7474->clock_w(m_dack2 || m_eop);
 }
 
+template <unsigned Slot>
+std::pair<std::error_condition, std::string> rc702_state::prom_load(device_image_interface &image)
+{
+	generic_slot_device &slot = downcast<generic_slot_device &>(image.device());
+	uint32_t const size = slot.common_get_size("rom");
+
+	if (size > 0x1000)
+		return std::make_pair(image_error::INVALIDLENGTH, "Unsupported PROM size (maximum 4KB)");
+
+	memory_region *region = memregion(Slot == 0 ? "maincpu" : "prom1_region");
+	if (!region || region->bytes() < 0x1000)
+		return std::make_pair(image_error::UNSPECIFIED, "PROM memory region not found or too small");
+
+	u8 *base = region->base();
+	std::memset(base, 0xff, 0x1000);
+	slot.common_load_rom(base, size, "rom");
+
+	// For <=2KB images, mirror into upper 2KB so 2716 images work
+	// whether jumper S13 (PROMCFG bit 0) is set to 2KB or 4KB.
+	if (size <= 0x0800)
+		std::memcpy(base + 0x0800, base, size);
+
+	return std::make_pair(std::error_condition(), std::string());
+}
+
 void rc702_state::port14_w(uint8_t data)
 {
 	// Mini floppy motor: bit 0 = 1 starts, 0 stops (no-op on always-spinning
@@ -625,6 +679,15 @@ static void rc703_floppies(device_slot_interface &device)
 	device.option_add("525qd", FLOPPY_525_QD);
 }
 
+// RC702 firmware (both rcbios and cpnos) programs CTC1 ch0/ch1 (TC=1) and
+// SIO WR4 (x16 mode) for 38400 baud 8N1. Configure attached null_modem
+// devices to match by default so serial communication is not garbled.
+static DEVICE_INPUT_DEFAULTS_START(rc702_null_modem_defaults)
+	DEVICE_INPUT_DEFAULTS("RS232_TXBAUD", 0xff, RS232_BAUD_38400)
+	DEVICE_INPUT_DEFAULTS("RS232_RXBAUD", 0xff, RS232_BAUD_38400)
+	DEVICE_INPUT_DEFAULTS("FLOW_CONTROL", 0x07, 0x01)
+DEVICE_INPUT_DEFAULTS_END
+
 void rc702_state::rc700_base(machine_config &config)
 {
 	/* basic machine hardware */
@@ -651,18 +714,17 @@ void rc702_state::rc700_base(machine_config &config)
 	m_sio->out_dtrb_callback().set(m_rs232b, FUNC(rs232_port_device::write_dtr));
 
 	// SIO-A (J1): data/reader port - mapped to RDR:/PUN: in CP/M.
+	// Defaults to 38400 baud 8N1 matching the firmware cold-boot rate.
 	RS232_PORT(config, m_rs232a, default_rs232_devices, "null_modem");
+	m_rs232a->set_option_device_input_defaults("null_modem", DEVICE_INPUT_DEFAULTS_NAME(rc702_null_modem_defaults));
 	m_rs232a->rxd_handler().set(m_sio, FUNC(z80sio_device::rxa_w));
 	m_rs232a->cts_handler().set(m_sio, FUNC(z80sio_device::ctsa_w));
 	m_rs232a->dcd_handler().set(m_sio, FUNC(z80sio_device::dcda_w));
 
-	// SIO-B (J2): traditionally a printer port.  Here it is wired to a
-	// null_modem so the guest can talk to an MP/M server running on the
-	// host -- CP/NET traffic can go over either this SIO channel or PIO-B.
-	// No baud-rate default is set; the firmware programs the CTC baud
-	// generator at cold boot, so match the null_modem slot to the firmware
-	// rate (typically 38400 8-N-1) in MAME's slot options.
+	// SIO-B (J2): traditionally a printer port; also usable for CP/NET traffic
+	// to MP/M server. Defaults to 38400 baud 8N1.
 	RS232_PORT(config, m_rs232b, default_rs232_devices, "null_modem");
+	m_rs232b->set_option_device_input_defaults("null_modem", DEVICE_INPUT_DEFAULTS_NAME(rc702_null_modem_defaults));
 	m_rs232b->rxd_handler().set(m_sio, FUNC(z80sio_device::rxb_w));
 	m_rs232b->cts_handler().set(m_sio, FUNC(z80sio_device::ctsb_w));
 	m_rs232b->dcd_handler().set(m_sio, FUNC(z80sio_device::dcdb_w));
@@ -705,16 +767,23 @@ void rc702_state::rc700_base(machine_config &config)
 	m_7474->output_cb().set(FUNC(rc702_state::q_w));
 	m_7474->comp_output_cb().set(FUNC(rc702_state::qbar_w));
 
+	// PROM sockets: IC66 (boot PROM0) and IC65 (optional line-program PROM1)
+	GENERIC_SOCKET(config, m_socket_prom0, generic_plain_slot, "rc700_rom", "bin,rom").set_device_load(FUNC(rc702_state::prom0_load));
+	GENERIC_SOCKET(config, m_socket_prom1, generic_plain_slot, "rc700_rom", "bin,rom").set_device_load(FUNC(rc702_state::prom1_load));
+
 	/* video hardware */
 	SCREEN(config, m_screen);
 	m_screen->set_refresh_hz(50);
-	// 80 chars × 7 px = 560 visible columns, 25 rows × 8 lines = 200 visible
+	// 80 chars × 7 px = 560 visible columns, 25 rows × 11 lines = 275 visible
 	// lines, plus CRTC_BORDER pixels of background colour on all four sides.
+	// (The firmware programs the 8275 for 11 scanlines/char row -- crt_param
+	// 0x7A -- so the QR sextant blocks fill the whole cell; a 200px/8-line
+	// screen clipped the bottom rows, incl. the CP/M A> prompt.)
 	// The margin is baked into the bitmap (bitmap.fill + coordinate offset in
 	// display_pixels) rather than .lay artwork, so SDL and BGFX both show the
 	// correct amber background colour without special-casing.
-	m_screen->set_size(560 + 2 * CRTC_BORDER, 200 + 4*8 + 2 * CRTC_BORDER);
-	m_screen->set_visarea(0, 559 + 2 * CRTC_BORDER - 1, 0, 199 + 2 * CRTC_BORDER - 1);
+	m_screen->set_size(560 + 2 * CRTC_BORDER, 275 + 4*8 + 2 * CRTC_BORDER);
+	m_screen->set_visarea(0, 559 + 2 * CRTC_BORDER - 1, 0, 274 + 2 * CRTC_BORDER - 1);
 	m_screen->set_screen_update(FUNC(rc702_state::screen_update_with_border));
 
 	I8275(config, m_crtc, DOT_CLOCK / 7);
@@ -796,16 +865,17 @@ void rc702_state::rc702sem702(machine_config &config)
 // roa375 only; rc703 defaults to rob357 with rob358 as an RC700 option.
 
 ROM_START( rc702 )
-	// IC66: 2716 (2KB) or 2732 (4KB) EPROM.  Region is 0x1000 with ERASEFF;
-	// a 2KB dump fills the low half and the rest stays 0xff.
+	// IC66: 2716 (2KB) or 2732 (4KB) EPROM.  Region is 0x1000 with ERASEFF.
+	// The early RC702 models could only use 2716s, but the later ones could use either
+	// with the size indicated with a jumper on the S13 header.
+	// Stock RC702 firmware is the 2 KB roa375 dump. Custom/development ROMs
+	// can be loaded into socket IC66 via the -prom0 option.
 	ROM_REGION( 0x1000, "maincpu", ROMREGION_ERASEFF )
 	ROM_LOAD( "roa375.ic66", 0x0000, 0x0800, CRC(034cf9ea) SHA1(306af9fc779e3d4f51645ba04f8a99b11b5e6084) )
 
-	// IC65 line-program ROM (ROB388 on MIC705), undumped.  Optional: drop a
-	// prom1.ic65 into the rom path to supply one (e.g. the CP/NOS line
-	// program); otherwise the region stays 0xff.
-	ROM_REGION( 0x1000, "prom1", ROMREGION_ERASEFF )
-	ROM_LOAD_OPTIONAL( "prom1.ic65", 0x0000, 0x1000, NO_DUMP )
+	// IC65 line-program ROM socket for the optional PROM1 (unpopulated by default).
+	// Custom/development ROMs can be loaded into socket IC65 via the -prom1 option.
+	ROM_REGION( 0x1000, "prom1_region", ROMREGION_ERASEFF )
 
 	ROM_REGION( 0x1000, "chargen", 0 )
 	ROM_LOAD( "roa296.rom", 0x0000, 0x0800, CRC(7d7e4548) SHA1(efb8b1ece5f9eeca948202a6396865f26134ff2f) ) // char
@@ -825,8 +895,8 @@ ROM_START( rc703 )
 	ROM_SYSTEM_BIOS(1, "rc700", "RC700")
 	ROMX_LOAD( "rob358.rom", 0x0000, 0x0800, CRC(254aa89e) SHA1(5fb1eb8df1b853b931e670a2ff8d062c1bd8d6bc), ROM_BIOS(1))
 
-	ROM_REGION( 0x1000, "prom1", ROMREGION_ERASEFF )
-	ROM_LOAD_OPTIONAL( "prom1.ic65", 0x0000, 0x1000, NO_DUMP )
+	// empty PROM1 line-program socket by default (see rc702 above).
+	ROM_REGION( 0x1000, "prom1_region", ROMREGION_ERASEFF )
 
 	ROM_REGION( 0x1000, "chargen", 0 )
 	ROM_LOAD( "roa296.rom", 0x0000, 0x0800, CRC(7d7e4548) SHA1(efb8b1ece5f9eeca948202a6396865f26134ff2f) )
