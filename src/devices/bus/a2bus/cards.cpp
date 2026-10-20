@@ -89,6 +89,7 @@ void apple2_slot0_cards(device_slot_interface &device)
 	device.option_add("romcard", A2BUS_ROMCARDUSER);    // Apple II ROM Card that loads a custom ROM image
 	device.option_add("romcardfp", A2BUS_ROMCARDFP);    // Apple II ROM Card with Autostart Monitor + Applesoft BASIC
 	device.option_add("romcardint", A2BUS_ROMCARDINT);  // Apple II ROM Card with Autostart Monitor + Integer BASIC
+	device.option_add("romcardforth", A2BUS_ROMCARDFORTH); // Apple II ROM Card with Autostart Monitor + FORTH
 }
 
 void apple2_cards(device_slot_interface &device)
@@ -127,6 +128,7 @@ void apple2_cards(device_slot_interface &device)
 	device.option_add("aevm80", A2BUS_AEVIEWMASTER80);         // Applied Engineering ViewMaster 80
 	device.option_add("parprn", A2BUS_PARPRN);                 // Apple II Parallel Printer Interface Card
 	device.option_add("4dparprn", A2BUS_4DPARPRN);             // Fourth Dimension Parallel Printer Interface
+	device.option_add("printmax", A2BUS_PRINTMAX);             // Micromax Printmax Parallel Printer Interface
 	device.option_add("parallel", A2BUS_PIC);                  // Apple II Parallel Interface Card
 	device.option_add("grappler", A2BUS_GRAPPLER);             // Orange Micro Grappler Printer Interface card
 	device.option_add("grapplus", A2BUS_GRAPPLERPLUS);         // Orange Micro Grappler+ Printer Interface card
@@ -211,6 +213,7 @@ void apple2e_cards(device_slot_interface &device)
 	device.option_add("aevm80", A2BUS_AEVIEWMASTER80);         // Applied Engineering ViewMaster 80
 	device.option_add("parprn", A2BUS_PARPRN);                 // Apple II Parallel Printer Interface Card
 	device.option_add("4dparprn", A2BUS_4DPARPRN);             // Fourth Dimension Parallel Printer Interface
+	device.option_add("printmax", A2BUS_PRINTMAX);             // Micromax Printmax Parallel Printer Interface
 	device.option_add("parallel", A2BUS_PIC);                  // Apple II Parallel Interface Card
 	device.option_add("grappler", A2BUS_GRAPPLER);             // Orange Micro Grappler Printer Interface card
 	device.option_add("grapplus", A2BUS_GRAPPLERPLUS);         // Orange Micro Grappler+ Printer Interface card
@@ -300,6 +303,7 @@ void apple2gs_cards(device_slot_interface &device)
 	device.option_add("aevm80", A2BUS_AEVIEWMASTER80);         // Applied Engineering ViewMaster 80
 	device.option_add("parprn", A2BUS_PARPRN);                 // Apple II Parallel Printer Interface Card
 	device.option_add("4dparprn", A2BUS_4DPARPRN);             // Fourth Dimension Parallel Printer Interface
+	device.option_add("printmax", A2BUS_PRINTMAX);             // Micromax Printmax Parallel Printer Interface
 	device.option_add("parallel", A2BUS_PIC);                  // Apple Parallel Interface Card
 	device.option_add("grappler", A2BUS_GRAPPLER);             // Orange Micro Grappler Printer Interface card
 	device.option_add("grapplus", A2BUS_GRAPPLERPLUS);         // Orange Micro Grappler+ Printer Interface card
@@ -319,7 +323,7 @@ void apple2gs_cards(device_slot_interface &device)
 	device.option_add("4play", A2BUS_4PLAY);                   // 4Play Joystick Card (Rev. B)
 	device.option_add("snesmax", A2BUS_SNES_MAX);              // SNES MAX controller adapter
 //  device.option_add("magicmusician", A2BUS_MAGICMUSICIAN);   // Magic Musician Card
-//  device.option_add("pcxport", A2BUS_PCXPORTER);             // Applied Engineering PC Transporter
+	device.option_add("pcxport", A2BUS_PCXPORTER);             // Applied Engineering PC Transporter
 	device.option_add("byte8251", A2BUS_BYTE8251);             // BYTE Magazine 8251 serial card
 	device.option_add("noisemaker", A2BUS_NOISEMAKER);         // ADS Noisemaker II
 	device.option_add("smaster", A2BUS_SMASTER);               // Covox Sound Master

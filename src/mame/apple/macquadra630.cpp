@@ -45,6 +45,8 @@
 
 #include "bus/adb/adb.h"
 #include "bus/adb/cards.h"
+#include "bus/nscsi/cd.h"
+#include "bus/nscsi/devices.h"
 #include "bus/nubus/cards.h"
 #include "bus/nubus/nubus.h"
 #include "cpu/m68000/m68040.h"
@@ -98,11 +100,8 @@ private:
 	virtual void machine_start() override ATTR_COLD;
 	virtual void machine_reset() override ATTR_COLD;
 
-	void cuda_reset_w(int state)
-	{
-		m_maincpu->set_input_line(INPUT_LINE_HALT, state);
-		m_maincpu->set_input_line(INPUT_LINE_RESET, state);
-	}
+	void cuda_reset_w(int state);
+	void cuda_power_w(int state);
 };
 
 void quadra630_state::machine_start()
@@ -113,6 +112,20 @@ void quadra630_state::machine_start()
 void quadra630_state::machine_reset()
 {
 	m_maincpu->set_input_line(INPUT_LINE_HALT, ASSERT_LINE);
+}
+
+void quadra630_state::cuda_reset_w(int state)
+{
+	m_maincpu->set_input_line(INPUT_LINE_HALT, state);
+	m_maincpu->set_input_line(INPUT_LINE_RESET, state);
+}
+
+void quadra630_state::cuda_power_w(int state)
+{
+	if (state)
+	{
+		machine().schedule_exit();
+	}
 }
 
 void quadra630_state::init_macqd630()
@@ -165,6 +178,22 @@ void quadra630_state::macqd630(machine_config &config)
 	m_f108->set_rom_tag("bootrom");
 	m_f108->write_ata_irq().set(m_primetimeii, FUNC(primetimeii_device::ata_irq_w));
 
+	NSCSI_CONNECTOR(config, "f108:scsi:0", mac_scsi_devices, nullptr);
+	NSCSI_CONNECTOR(config, "f108:scsi:1", mac_scsi_devices, nullptr);
+	NSCSI_CONNECTOR(config, "f108:scsi:2", mac_scsi_devices, nullptr);
+	NSCSI_CONNECTOR(config, "f108:scsi:3").option_set("cdrom", NSCSI_CDROM_APPLE).machine_config(
+		[](device_t *device)
+		{
+			device->subdevice<cdda_device>("cdda")->add_route(0, "^^^primetimeii:speaker", 1.0, 0);
+			device->subdevice<cdda_device>("cdda")->add_route(1, "^^^primetimeii:speaker", 1.0, 1);
+		});
+	NSCSI_CONNECTOR(config, "f108:scsi:4", mac_scsi_devices, nullptr);
+	NSCSI_CONNECTOR(config, "f108:scsi:5", mac_scsi_devices, nullptr);
+	NSCSI_CONNECTOR(config, "f108:scsi:6", mac_scsi_devices, nullptr);
+
+	SOFTWARE_LIST(config, "hdd_list").set_original("mac_hdd");
+	SOFTWARE_LIST(config, "cd_list").set_original("mac_cdrom").set_filter("MC68040");
+
 	PRIMETIMEII(config, m_primetimeii, 33_MHz_XTAL);
 	m_primetimeii->set_maincpu_tag("maincpu");
 	m_primetimeii->set_scsi_tag("f108:ncr53c96");
@@ -179,6 +208,7 @@ void quadra630_state::macqd630(machine_config &config)
 	CUDA_V2XX(config, m_cuda, XTAL(32'768));
 	m_cuda->set_default_bios_tag("341s0060");
 	m_cuda->reset_callback().set(FUNC(quadra630_state::cuda_reset_w));
+	m_cuda->poweroff_callback().set(FUNC(quadra630_state::cuda_power_w));
 	m_cuda->linechange_callback().set(m_adbbus, FUNC(adb_bus_device::adb_host_line_w));
 	m_cuda->via_clock_callback().set(m_primetimeii, FUNC(primetime_device::cb1_w));
 	m_cuda->via_data_callback().set(m_primetimeii, FUNC(primetime_device::cb2_w));
