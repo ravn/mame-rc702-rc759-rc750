@@ -834,7 +834,7 @@ ROM_START( rc702 )
 	// 0x0800 (stock 2 KB roa375 dump) afterwards.  BADCRC: the 2 KB dump's hash
 	// no longer matches a 4 KB read; kept for provenance, warning is harmless.
 	ROM_REGION( 0x1000, "maincpu", ROMREGION_ERASEFF )
-	ROM_LOAD( "roa375.ic66", 0x0000, 0x1000, CRC(2a45fdb9) SHA1(994702c000b6a685288b5cedae0f29e3d4efd1aa) )
+	ROM_LOAD( "roa375.ic66", 0x0000, 0x1000, CRC(8b1d5d7a) SHA1(527e4cb5290a946c50df8814f96ce8036152ba7b) )
 
 	// IC65 line-program ROM socket for the optional PROM1.
 	ROM_REGION( 0x1000, "prom1", ROMREGION_ERASEFF )
